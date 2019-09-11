@@ -31,21 +31,22 @@
 	  (setf (gethash name (website-pages website)) page)))
     page))
 
-(defun generate-handlers (pages)
-  (maphash #'(lambda (key page)
-	       (declare (ignore key))	       
-	       (macrolet ((easy-handler (page)
-			    `(let ((name (page-name ,page))
-				   (uri (page-uri ,page))
-				   (get-post-params
-				   (page-get-post-params ,page))
-				   (content (page-content ,page)))
-			       `(hunchentoot:define-easy-handler
-				   (,name :uri ,uri)
-				   ,get-post-params
-				 ,@content))))
-		 (easy-handler page)))
-	   pages))
+(defmacro generate-handlers (pages)
+  `(maphash #'(lambda (key page)
+		(declare (ignore key))
+		(let ((name (page-name page))
+		      (uri (page-uri page))
+		      (get-post-params
+		       (page-get-post-params page))
+		      (content (page-content page)))
+		  (easy-handler name uri get-post-params content)))
+	    `,,pages))
+
+(defmacro easy-handler (name uri get-post-params content)
+  `(hunchentoot:define-easy-handler
+       (,name :uri ,uri)
+       (,@get-post-params)
+     ,@content))
 
 (defun serve-website (website &key (port 8000) (mode 'dev)
 				(www-root *default-www-root*))
@@ -58,3 +59,7 @@
 					    :port port
 					    :document-root www-root)))
     website))
+
+
+(hunchentoot:define-easy-handler (home :uri "/home") (name)
+	   (format nil "Hey~@[ ~A~]!" name))

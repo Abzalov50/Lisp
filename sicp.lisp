@@ -8,7 +8,7 @@
 		   (deriv (cadr exp) var)
 		   (deriv (caddr exp) var)))
 	((product-p exp)
-	 (make-sum (car exp)
+	 (make-sum '+
 		   (make-product (deriv (cadr exp) var)
 				 (caddr exp))
 		   (make-product (cadr exp)
@@ -20,13 +20,15 @@
 		       (eq (car exp) '-))))
 
 (defun ident-sum-p (op exp)
-  (and (atom exp) (zerop exp) (or (eq op '+) (eq op '-))))
+  (and (atom exp) (numberp exp) (zerop exp) (or (eq op '+) (eq op '-))))
 
 (defun ident-mult-p (exp)
-  (and (atom exp) (= exp 1)))
+  (and (atom exp) (numberp exp) (= exp 1)))
 
 (defun make-sum (op e1 e2)
-  (cond ((ident-sum-p op e1)
+  (cond ((null e1) e2)
+	((null e2) e1)
+	((ident-sum-p op e1)
 	 (if (eq op '-)
 	     (list '- e2)
 	     e2))
@@ -40,11 +42,15 @@
   (and (consp exp) (eq (car exp) '*)))
 
 (defun make-product (e1 e2)
-  (cond ((ident-mult-p e1)
+  (cond ((null e1) e2)
+	((null e2) e1)
+	((ident-mult-p e1)
 	 e2)
 	((ident-mult-p e2)
 	 e1)
-	((or (zerop e1) (zerop e2))
+	((and (numberp e1) (zerop e1))
+	 nil)
+	((and (numberp e2) (zerop e2))
 	 nil)
 	(t (list '* e1 e2))))
   
