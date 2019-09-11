@@ -1,0 +1,237 @@
+;; (ql:quickload :let-over-lambda)
+(defun gap (x y)
+  (abs (- x y)))
+
+(defun converged-p (gap eps)
+  (if (< gap eps) t nil))
+
+(defun scalarp (x) (numberp x))
+
+(defmacro choose-axis (x axis)
+  (let ((g-x (gensym)))
+  `(let ((,g-x (make-array (array-dimensions ,x))))
+     (setf (aref ,g-x ,axis 0)
+	   (aref ,x ,axis 0))
+     ,g-x)))
+
+#|
+(defmacro gradient (f x dx)
+  (let ((g (gensym)))
+    `(let ((,g ,x))
+       (cond (,(scalarp x)
+	  (/ (- (funcall ,f (+ ,x ,dx)) (funcall ,f (- ,x ,dx)))
+	     (* 2 ,dx)))
+	 (t  ; x is a (n 1) array where `n' is its length
+	  (let ((df ,(make-array '(2 1)))
+		(n (array-dimension ,x 0)))
+	    (dotimes (i n)
+	      (let ((xi (choose-axis ,g i))
+		    (dxi (choose-axis ,dx i)))
+		(setf (aref df i 0)
+		      (/ (- (funcall ,f (matrix+ xi dxi))
+			    (funcall ,f (matrix+ xi (matrix-scalar* -1 dxi))))
+			 (* 2.0 dxi)))))
+	    df))))))
+|#
+(defun gradient (f x dx)
+  (cond ((scalarp x)
+	 (/ (- (funcall f (+ x dx)) (funcall f (- x dx)))
+	    (* 2 dx)))
+	(t  ; x is a (n 1) array where `n' is its length
+	 (let ((df (make-array '(2 1)))
+	       (n (array-dimension x 0)))
+	   (dotimes (i n)
+	      (let ((xi (choose-axis x i))
+		    (dxi (choose-axis dx i)))
+		(setf (aref df i 0)
+		      (/ (- (funcall f (matrix+ xi dxi))
+			    (funcall f (matrix+ xi (matrix-scalar* -1 dxi))))
+			 (* 2.0 (aref dxi i 0))))))
+	    df))))
+
+(defun bissection (f df a b eps)
+  (lol:nlet-tail bis-rec ((a a) (b b) (half (/ (+ a b) 2.0))
+			  (flag t))
+    (cond ((and flag (< (* (funcall df a) (funcall df half)) 0)
+		(bis-rec a half half nil)))
+	  ((and flag (>= (* (funcall df a) (funcall df half)) 0)
+		(bis-rec half b half nil)))
+	  ((converged-p (gap a b) eps)
+	   (values a (funcall f a)))
+	  (t (bis-rec a b (/ (+ a b) 2.0) t)))))
+
+(defun newton-raphson (x f df ddf eps)
+  (labels ((nr-approx (x)
+	     (- x (/ (funcall df x)
+		     (funcall ddf x)))))
+    (lol:nlet-tail nr-rec ((x (nr-approx x)) (x-prev x))
+      (cond ((converged-p (gap x x-prev) eps)
+	     (values x (funcall f x)
+		     (funcall df x) (funcall ddf x)))
+	    (t (nr-rec (nr-approx x) x))))))
+
+;;; tau = (- 2 golden-number)
+;;; golden-number = 1.618
+(defmacro gs-comp-fun-eval (op x1 x2 &rest op-other-args)
+  `(,op (funcall f (matrix+ x
+			    (matrix-scalar* ,x1
+					    search-direction)))
+	(funcall f (matrix+ x
+			    (matrix-scalar* ,x2
+					    search-direction)))
+	,@op-other-args))
+
+(defun golden-section (f a b tau &optional
+				   (x (make-array
+				       '(1 1) :initial-contents '((0))))
+				   (search-direction
+				    (make-array '(1 1) :initial-contents '((1))))
+				   (eps 1e-5) (niter 1000))
+								     
+  (lol:nlet-tail gs-rec ((a a) (b b)
+			 (x1 (+ (* a (- 1 tau))
+				(* b tau)))
+			 (x2 (+ (* a tau)
+				(* b (- 1 tau))))
+			 (niter niter)
+			 (flag t))
+    (cond ((and flag (gs-comp-fun-eval > x1 x2))
+	   (setf a x1)
+	   (gs-rec a b x2 (+ (* a tau)
+			     (* b (- 1 tau)))
+		   niter nil))
+	  ((and flag (gs-comp-fun-eval <= x1 x2))
+	   (setf b x2)
+	   (gs-rec a b (+ (* a (- 1 tau))
+			  (* b tau))
+		   x1 niter nil))
+	  ((or (zerop niter)
+	       (converged-p (gs-comp-fun-eval gap x1 x2) eps))
+	       (values x1 (funcall f (matrix+ x
+					      (matrix-scalar* x1
+							      search-direction)))))
+	  (t (gs-rec a b x1 x2 (1- niter) t)))))
+
+(defun f (x)
+  (+ (* 2 (aref x 0 0) (aref x 0 0)) (* (- 2) (aref x 0 0)) 8))
+
+(defun square (x)
+  (* x x))
+
+(defun rosenbrock (x)
+  (+ (* 100.0 (square (- (aref x 1 0) (square (aref x 0 0)))))
+     (square (- 1 (aref x 0 0)))))
+
+(defun d-rosenbrock (x)
+  (make-array '(2 1)
+	      :initial-contents (list (list (+ (* (- 400)
+						  (aref x 0 0)
+						  (- (aref x 1 0)
+						     (square (aref x 0 0))))
+					       (* -2 (- 1 (aref x 0 0)))))
+				      (list (* 200 (aref x 1 0)
+					       (- (aref x 1 0)
+						  (square (aref x 0 0))))))))
+
+(defmacro dostep (var from to by &rest body)
+  `(do ((,var ,from (+ ,var ,by)))
+       ((>= ,var ,to))
+     ,@body))
+
+(defun spring-system (x &key (k1 100) (k2 90)
+			  (F (make-array '(2 1) :initial-contents '((20) (40)))))
+  (let ((x1 (aref x 0 0))
+	(x2 (aref x 1 0))
+	(Fx1 (aref F 0 0))
+	(Fx2 (aref F 1 0)))
+    (+ (* k1 (square (- (sqrt (+ (square x1)
+				 (square (+ x2 1))))
+			1)))
+       (* k2 (square (- (sqrt (+ (square x1)
+				 (square (- x2 1))))
+			1)))
+       (- (+ (* Fx1 x1) (* Fx2 x2))))))
+
+(defun optimize-spring-system (system-fun &optional
+					    (var-domain
+					     (make-array '(2 1)
+							 :initial-contents '((-1) (1))))
+					    (step-size 0.01))
+  (let* ((xmin (aref var-domain 0 0))
+	 (xmax (aref var-domain 1 0))
+	 (f* 1e20) (x* (make-array '(2 1))))
+    (dostep x1 xmin xmax step-size
+	    (dostep x2 xmin xmax step-size
+		    (let* ((x (make-array '(2 1)
+					  :initial-contents (list (list x1) (list x2))))
+			   (f-new (funcall system-fun x)))
+		      (when (< f-new f*)
+			(progn
+			  (setf (aref x* 0 0) x1)
+			  (setf (aref x* 1 0) x2)
+			  (setf f* f-new))))))
+    (values f* x*)))
+	  
+  
+#|
+(defun bissection (f df a b eps &rest f-aux-args)
+  (lol:nlet-tail bis-rec ((a a) (b b) (half (/ (+ a b) 2.0)) (flag t))
+		 (cond ((and flag (< (* (apply df (cons a f-aux-args))
+					(apply df (cons half f-aux-args)))
+				     0)
+			     (bis-rec a half half nil)))
+		       ((and flag (> (* (apply df (cons a f-aux-args))
+					(apply df (cons half f-aux-args)))
+				     0)
+			     (bis-rec half b half nil)))
+		       ((converged-p (gap a b) eps)
+			(values a (funcall f a)))
+		       (t (bis-rec a b (/ (+ a b) 2.0) t)))))
+|#
+(defun matrix-get-row (m row)
+  (do* ((ncols (array-dimension m 1))
+	(i -1 (incf i))
+	(res-row (make-array ncols)
+		 (progn
+		   (setf (aref res-row i)
+			 (aref m row i))
+		   res-row)))
+       ((= i (1- ncols)) res-row)))
+
+(defun matrix-get-col (m col)
+  (do* ((nrows (array-dimension m 0))
+	(i -1 (incf i))
+	(res-col (make-array nrows)
+		 (progn
+		   (setf (aref res-col i)
+			 (aref m i col))
+		   res-col)))
+       ((= i (1- nrows)) res-col)))
+
+(defun matrix-fetch-elt (row col &rest matrices)
+  (lol:nlet-tail rec ((matrices matrices) (lst nil))
+    (cond ((endp matrices) lst)
+	  (t (rec (cdr matrices)
+		  (cons (aref (car matrices) row col)
+			lst))))))
+
+(defun matrix+ (&rest matrices)
+  (let* ((nrows (array-dimension (car matrices) 0))
+	 (ncols (array-dimension (car matrices) 1))
+	 (res-m (make-array (list nrows ncols))))
+    (dotimes (i nrows)
+      (dotimes (j ncols)
+	(setf (aref res-m i j)
+	      (reduce #'+ (apply #'matrix-fetch-elt
+				 (append (list i j) matrices))))))
+    res-m))
+
+(defun matrix-scalar* (scalar m)
+  (let* ((nrows (array-dimension m 0))
+	 (ncols (array-dimension m 1))
+	 (res-m (make-array (list nrows ncols))))
+    (dotimes (i nrows)
+      (dotimes (j ncols)
+	(setf (aref res-m i j)
+	      (* scalar (aref m i j)))))	      
+    res-m))

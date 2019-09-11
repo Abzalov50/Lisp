@@ -1,0 +1,51 @@
+(defun multiples (num max)
+  (cond ((not (zerop (mod max num)))
+	 (multiples num (- max (mod max num))))
+	((= max num) (list num))
+	(t (cons max (multiples num (- max num))))))
+
+(defun evens (max)
+  (cond ((oddp max) (evens (1- max)))
+	((= max 2) (list 2))
+	(t (cons max (evens (- max 2))))))
+
+(defun element-p (elt lst)
+  (cond ((null lst) nil)
+	((equal elt (first lst)) t)
+	(t (element-p elt (rest lst)))))
+
+(defun set-p (lst)
+  (cond ((null lst) t)
+	((listp (first lst)) nil)
+	((element-p (first lst) (rest lst)) nil)
+	(t (set-p (rest lst)))))
+
+(defun inter (set1 set2)
+  (cond ((or (null set1) (null set2)) nil)
+	((element-p (first set1) set2)
+	 (cons (first set1) (inter (rest set1) set2)))
+	(t (inter (rest set1) set2))))
+
+(defun disjoint-p (set1 set2)
+  (cond ((inter set1 set2) nil)
+	(t t)))
+
+(defun subset-p (set1 set2)
+  (cond ((> (length set1) (length set2)) nil)
+	((null set1) t)
+	(t (and (element-p (first set1) set2)
+		(subset-p (rest set1) set2)))))
+
+(defun subset-p-2 (set1 set2)
+  (cond ((equal set1 (inter set1 set2)) t)
+	(t nil)))
+
+(defun ~ (universe set)
+  (cond ((null universe) nil)
+	((element-p (first universe) set)
+	 (~ (rest universe) set))
+	(t (cons (first universe)
+		 (~ (rest universe) set)))))
+
+(defun U (set1 set2)
+  (append (~ set1 (inter set1 set2)) set2))

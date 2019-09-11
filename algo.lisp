@@ -1,0 +1,12 @@
+(defun sort-selection.v1 (lst)
+  "Iterative version of selection sort (nondecreasing order)"
+  (let ((N (length lst)))
+    (dotimes (i (1- N))
+      (let ((smallest i))
+	(do ((j (1+ i) (1+ j)))
+	    ((= j (1- N)) (let ((temp (elt lst i)))
+			    (setf (elt lst i) (elt lst smallest)
+				  (elt lst smallest) temp)))
+	  (when (> (elt lst smallest) (elt lst j))
+	    (setf smallest j)))))
+    lst))
