@@ -6,6 +6,9 @@
 ;;; #(1 2 3 -1 0)
 ;;; #("arnold" -2 'xcopy)
 
+(defparameter *padding* 2)
+(defparameter *sep* #\Space)
+
 (defun true (arg)
   (if arg
       t
@@ -26,7 +29,6 @@ The second one apply the former recursively to two consecutives vectors."
 		 (error "Vectors must have the same size.")
 		 (block mapvec
 		   (map 'vector #'(lambda (elt1 elt2)
-					;(format t "~A ~A~%" elt1 elt2)
 				    (when (not (funcall pred elt1 elt2))
 				      (return-from mapvec nil)))
 			v1 v2)
@@ -190,11 +192,73 @@ into two subsets of the same size."
 ;;; #((1 2 3) (4 5 6)) is a (2 x 3) array
 ;;; #((0 -1) (3 3)) is a (2 x 2) array
 ;;; A vector is just a 1D array.
+
+;;; Printing functions
+(defun type->string (x)
+  "Coerce the given data (of any `type') into string.
+E.g.: (type->string 125) ==> \"125\"
+      (type->string '(1 2 5)) ==> \"(1 2 5)\""
+  (typecase x
+    (string x)
+    (symbol (symbol-name x))
+    (t (write-to-string x))))
+
+(defun cols-width (m)
+  "Returns a list that contains the width of each column of the given matrix `m'.
+The width is the length of the longest element of the column.
+To get the length of an element, it is first converted into string."
+  (let ((w-lst nil))
+    (dotimes (i (matrix-ncols m))
+      (setf w-lst
+	    (append w-lst
+		    (list
+		     (matrix-max (matrix-aref (matrix-map #'length
+							  (matrix-map #'type->string m))
+					      :col i))))))
+    w-lst))
+
+(defun print-row (destination row widths &key (padding 1) (sep #\Space))
+  "Print the row `row' where each column's width is specified in the list `widths'.
+The argument `padding' specify the number of blank space between an element 
+and the separator `sep'. Separator can be any character."
+  (dotimes (i (matrix-nrows row))
+    (format destination (concatenate 'string
+				     "~" (write-to-string (elt widths i)) "<~S~>")
+	    (aref (matrix-contents row) i 0))
+    (when (not (= i (matrix-nrows row)))
+      (format destination (concatenate 'string
+				       "~" (write-to-string padding) "<~C~>")
+				       sep)))
+  (format destination "~%"))
+
+(defun print-matrix (destination m &key (padding 1) (sep #\Space))
+  "Print matrix `m' in tabular format."
+  (let ((widths (cols-width m)))
+    (dotimes (i (matrix-nrows m))
+      (print-row destination (matrix-aref m :row i) widths :padding padding :sep sep))))
+
+(defun copy-array (m)
+  "Return a new array `new-m' that contains the same elements as `m'.
+That is (eq m new-m) must evaluate to NIL.
+By default, (setq new-m m) does not create a new pointer, 
+that is (eq m new-m) ==> T."
+  (let* ((ndim (array-dimensions m))
+	 (new-m (make-array ndim)))
+    (cond ((= (length ndim) 1)
+	   (dotimes (i (elt ndim 0))
+	     (setf (aref new-m i) (aref m i))))
+	  ((= (length ndim) 2)
+	   (dotimes (i (elt ndim 0))
+	     (dotimes (j (elt ndim 1))
+	       (setf (aref new-m i j) (aref m i j)))))
+	  (t (error "Unsupported dimension of matrix.")))
+    new-m))
+
 (defstruct (matrix
 	     (:print-function
 	      (lambda (struct stream depth)
 		(declare (ignore depth))
-		(print-matrix stream struct)
+		(print-matrix stream struct :padding *padding* :sep *sep*)
 		(format stream "~&~%[~A x ~A matrix (~A elements)]~%"
 			(matrix-nrows struct) (matrix-ncols struct)
 			(* (matrix-nrows struct) (matrix-ncols struct))))))
@@ -203,62 +267,45 @@ into two subsets of the same size."
   (nrows 0)
   (ncols 0))
 
-(defun copy-array (m)
-  "Return a new array `new-m' that contains the same elements as `m'.
-That is (eq m new-m) must evaluate to NIL.
-By default, (setq new-m m) does not create a new pointer, 
-that is (eq m new-m) ==> T."
-  (let ((new-m (make-array (array-dimensions m))))
-    (dotimes (i (array-dimension m 0))
-      (dotimes (j (array-dimension m 1))
-	(setf (aref new-m i j) (aref m i j))))
-    new-m))
-
-(defun defmatrix (m)
-  "Return a matrix structure from the given array (or list) `m'."
-  (when (listp m)
-    (setq m (make-array (list (length m) (length (car m)))
-			:initial-contents m)))    
-  (make-matrix :dimensions (array-dimensions m)
-	       :contents (copy-array m)
-	       :nrows (array-dimension m 0)
-	       :ncols (array-dimension m 1)))
-
-(defun matrix-elt (m row col)
-  "Return the element of the matrix `m' at the `row'th row
-and `col'th column.
-Note that index begins by 0. So to get the element at the first row
-and first column, the arguments `row' and `col' must be set to 0 and 0,
-respectively."
-  (aref (matrix-contents m) row col))
-
-(defun matrix-row (m row)
-  "Return the vector that represents the `row'th row of matrix `m'.
-Note that for the first row, `row' must be equal to 0; for the second row,
-it must be equal to 1, and so on."
-  (let* ((row-length (matrix-ncols m))
-	 (v (make-array row-length)))
-    (dotimes (i row-length)
-      (setf (aref v i) (matrix-elt m row i)))
-    v))
-
-(defun matrix-column (m col)
-  "Return the vector that represents the `col'th column of matrix `m'.
-Note that for the first column, `col' must be equal to 0; for the second column,
-it must be equal to 1, and so on."
-  (let* ((column-length (matrix-nrows m))
-	 (v (make-array column-length)))
-    (dotimes (i column-length)
-      (setf (aref v i) (matrix-elt m i col)))
-    v))
+(defun defmatrix (m &key (inplace nil))
+  "Return a matrix structure from the given array (or list) `m'.
+When a list or vecteor of length N is given, a matrix of dimension (N 1) is returned,
+that is, ALWAYS a column vector."
+  (if (matrix-p m)
+      (if inplace
+	  m
+	  (copy-matrix m))
+      (let ((nrows 0) (ncols 0) (contents nil))
+	(etypecase m
+	  (list
+	   (setq nrows (length m)
+		 contents (if inplace m (copy-seq m)))
+	   (etypecase (car m)
+	     (atom
+	      (setq ncols 1))
+	     (cons
+	      (setq ncols (length (car m))))))
+	  (vector
+	   (setq nrows (length m)
+		 ncols 1
+		 contents (if inplace m (copy-seq m))))
+	  (array
+	   (setq nrows (array-dimension m 0)
+		 ncols (array-dimension m 1)
+		 contents (if inplace m (copy-array m)))))
+	(make-matrix :dimensions (list nrows ncols)
+		     :contents contents
+		     :nrows nrows
+		     :ncols ncols))))
 
 (defun matrix-map (fn m)
   "Map function `fn' over the elements of matrix `m', 
 and return the resulting matrix."
   (let* ((res (make-array (matrix-dimensions m)))
-	 (m1 (matrix-contents m)))
+	 (m1 (matrix-contents m))
+	 (ncols (matrix-ncols m)))
     (dotimes (i (matrix-nrows m))
-      (dotimes (j (matrix-ncols m))
+      (dotimes (j ncols)
 	(setf (aref res i j) (funcall fn (aref m1 i j)))))
     (defmatrix res)))
 
@@ -289,7 +336,7 @@ the given matrix in the right order."
   (let ((nrows (matrix-nrows m))
 	 (res nil))
      (dotimes (i nrows)
-       (setf res (append res (coerce (matrix-row m i) 'list))))
+       (setf res (append res (coerce (matrix-aref m :row i) 'list))))
      res))
 
 (defun matrix-compare (pred &rest args)
@@ -302,10 +349,11 @@ The second one apply the former recursively to two consecutives matrices."
 	     (if (not (equal (matrix-dimensions m1) (matrix-dimensions m2)))
 		 (error "Matrices must have the same dimensions.")
 		 (block mapvec
-		   (dotimes (i (matrix-nrows m1))
-		     (when (not (vector-compare pred (matrix-row m1 i)
-						(matrix-row m2 i)))
-		       (return-from mapvec nil)))
+		   (let ((arr1 (matrix-contents m1)) (arr2 (matrix-contents m2)))
+		     (dotimes (i (matrix-nrows m1))
+		       (dotimes (j (matrix-ncols m1))
+			 (when (not (funcall pred (aref arr1 i j) (aref arr2 i j)))
+			   (return-from mapvec nil)))))
 		   t)))
 	   (comp-rec (new-args)
 	     (cond ((or (= (length new-args) 1) (null new-args)) t)
@@ -358,15 +406,14 @@ It only makes sense for square matrices."
 		    (error "Matrices must have the same size."))
 		   ((matrix-identity-add-p m1) m2)
 		   ((matrix-identity-add-p m2) m1)
-		   (t (let* ((nrows (matrix-nrows m1))
-			     (v nil))
-			(dotimes (i nrows)  ; Construction of a vector of vectors
-			  ;; Each `i'th vector is the sum
-			  ;; of the two `i'th rows of both matrices
-			  (setf v (append v (list (vector+ (matrix-row m1 i)
-							   (matrix-row m2 i))))))
-			(defmatrix (make-array (matrix-dimensions m1)
-					       :initial-contents v)))))))
+		   (t (let* ((res-m (copy-matrix m1))
+			     (arr (matrix-contents res-m))
+			     (arr-1 (matrix-contents m1))
+			     (arr-2 (matrix-contents m2)))
+			(dotimes (i (matrix-nrows m1))
+			  (dotimes (j (matrix-ncols m1))
+			    (setf (aref arr i j) (+ (aref arr-1 i j) (aref arr-2 i j)))))
+			(defmatrix arr))))))
     (if (null matrices)
 	0
 	(reduce #'binary-add matrices))))
@@ -375,12 +422,7 @@ It only makes sense for square matrices."
   "Return a matrix where each component is the negative of the corresponding component
 in the given matrix, at the same position."
   (cond ((matrix-identity-add-p m) m)
-	(t (let ((nrows (matrix-nrows m))
-		 (res-m nil))
-	     (dotimes (i nrows)
-	       (setf res-m (append res-m (list (vector-neg (matrix-row  m i))))))
-	     (defmatrix (make-array (matrix-dimensions m)
-				    :initial-contents res-m))))))
+	(t (matrix-map #'- m))))
 
 (defun matrix* (m1 m2)
   "Return the product of the two given matrices."
@@ -396,13 +438,17 @@ to the number of ROWS of the second one."))
 		  (res-m (make-array (list nrows ncols))))
 	     (dotimes (i nrows)
 	       (dotimes (j ncols)
-		 (setf (aref res-m i j) (vector* (matrix-row m1 i)
-						 (matrix-column m2 j)))))
+		 (setf (aref res-m i j) (vector* (matrix-aref m1 :row i)
+						 (matrix-aref m2 :col j)))))
 	     (defmatrix res-m)))))
 
 (defun matrix-ones (dimensions)
   "Return a matrix in which all the elements are 1's."
   (defmatrix (make-array dimensions :initial-element 1)))
+
+(defun matrix-zeros (dimensions)
+  "Return a matrix in which all the elements are 0's."
+  (defmatrix (make-array dimensions :initial-element 0)))
 
 (defun matrix-scalar-mult (scalar m)
   "Return a matrix where each element is the product of the given SCALAR
@@ -410,13 +456,8 @@ and each element of the given MATRIX."
   (cond ((not (and (matrix-p m) (numberp scalar)))
 	      (error "The first argument must be a NUMBER and the second one
 must be a MATRIX."))
-	(t (let ((nrows (matrix-nrows m))
-		 (res-m nil))
-	     (dotimes (i nrows)
-	       (setf res-m (append res-m
-				   (list (vector-scalar-mult scalar (matrix-row m i))))))
-	     (defmatrix (make-array (matrix-dimensions m)
-				    :initial-contents res-m))))))
+	(t (matrix-map #'(lambda (x) (* scalar x))
+		       m))))
 
 (defun matrix-same-elt-p (eq-pred m)
   "Return T if all the elements of the matrix are equal by the given EQUALITY PREDICATE."
@@ -459,59 +500,127 @@ It makes sense only for square matrices."
 	     (dotimes (i len)
 	       (setf (aref arr i i) (aref diag-v i)))
 	     (defmatrix arr)))))
-#|
-(defun copy-matrix (m)
-  "Return a copy `new-m' of the given MATRIX `m', so that (eq m new-m) evaluates to NIL."
-  (defmatrix (copy-array (matrix-contents m))))
-|#
 
-(defun matrix-aref (m row col)
-  "Return the element of the given MATRIX at the position specified by the ROW 
-and COLUMN arguments."
-  (aref (matrix-contents m) row col))
+(defun matrix-aref-2 (m &key row col)
+  "Return the element, row or column of the given MATRIX at the position 
+specified by the ROW and COLUMN arguments."
+  (cond ((and (not row) (not col))
+	 m)	 
+	((and row (not col))
+	 (let* ((ncols (matrix-ncols m))
+		(new-arr (make-array (list ncols 1)))
+		(arr (matrix-contents m)))
+	   (dotimes (j ncols)
+	     (setf (aref new-arr j 0) (aref arr row j)))
+	   (defmatrix new-arr)))
+	((and col (not row))
+	 (let* ((nrows (matrix-nrows m))
+		(new-arr (make-array (list nrows 1)))
+		(arr (matrix-contents m)))
+	   (dotimes (i nrows)
+	     (setf (aref new-arr i 0) (aref arr i col)))
+	   (defmatrix new-arr)))
+	(t (aref (matrix-contents m) row col))))
 
-(defun matrix-setf (m row col newval)
-  "Set the element of the MATRIX at the given position ROW and COLUMN, 
+(defun matrix-aref (m &key row col)
+  "Return the element, row or column of the given MATRIX at the position 
+specified by the ROW and COLUMN arguments."
+  (cond ((and (not row) (not col))
+	 m)
+	(t (let* ((ncols (matrix-ncols m))
+		  (nrows (matrix-nrows m))
+		  (row (cond ((not row) (list 0 nrows))
+			     ((numberp row) (list row (1+ row)))
+			     ((listp row) row)
+			     (t (error "Unsupported type"))))
+		  (col (cond ((not col) (list 0 ncols))
+			     ((numberp col) (list col (1+ col)))
+			     ((listp col) col)
+			     (t (error "Unsupported type"))))
+		  (nc (- (second col) (first col)))
+		  (nr (- (second row) (first row)))
+		  (new-arr (make-array (list nr nc)))
+		  (arr (matrix-contents m)))
+	     (do ((i (first row) (1+ i))
+		  (p 0 (1+ p)))
+		 ((= i (second row)) (defmatrix new-arr))
+	       (do ((j (first col) (1+ j))
+		    (s 0 (1+ s)))
+		   ((= j (second col)))
+		 (setf (aref new-arr p s) (aref arr i j))))))))
+
+(defun matrix-setf (m newval &key row col)
+  "Set the element, row or column of the MATRIX at the given position ROW and COLUMN, 
 to the given VALUE."
-  (let ((arr (matrix-contents m)))
-    (setf (aref arr row col) newval)))
-
-(defun matrix-set-row (m row-number new-row)
-  "Set the given ROW at the given row position of the MATRIX."
-  (cond ((not (= (length new-row) (matrix-nrows m)))
-	 (error "The new row must have the same length as the row the matrix."))
-	((not (vectorp new-row)) (error "The new row must be a vector."))
-	(t (let ((arr (matrix-contents m)))
-	     (dotimes (i (matrix-ncols m))
-	       (setf (aref arr row-number i) (aref new-row i)))
-	     m))))
-
-(defun matrix-set-column (m col-number new-col)
-  "Set the given COLUMN at the given column position of the MATRIX."
-  (cond ((not (= (length new-col) (matrix-ncols m)))
-	 (error "The new column must have the same length as the column the matrix."))
-	((not (vectorp new-col)) (error "The new column must be a vector."))
-	(t (let ((arr (matrix-contents m)))
-	     (dotimes (i (matrix-ncols m))
-	       (setf (aref arr i col-number) (aref new-col i)))
-	     m))))
+  (if (and (not row) (not col))
+      m
+      (let ((arr (matrix-contents m))
+	    (arr-1 (matrix-contents newval)))
+	(cond
+	  ((and col (not row))
+	   (dotimes (i (matrix-nrows newval))
+	     (setf (aref arr i col) (aref arr-1 i 0))))
+	  ((and row (not col))
+	   (dotimes (j (matrix-nrows newval))
+	     (setf (aref arr row j) (aref arr-1 j 0))))
+	  (t (setf (aref arr row col) newval)))
+	(defmatrix arr))))
 
 (defun matrix-T (m)
   "Return the transpose of the given matrix.
 It makes sense only for square matrices."
-  (let ((new-m (copy-matrix m)))
-    (format t "~S~%" new-m)
-    (cond ((not (matrix-square-p m))
-	   (error "The number of COLUMNS and ROWS of the given MATRIX must be equal."))
-	  ((or (matrix-identity-add-p m) (matrix-identity-mult-p m)) new-m)
-	  ((matrix-same-elt-p #'equalp m) new-m)
-	  (t (let ((nrows (matrix-nrows m))
-		   (ncols (matrix-ncols m)))
-	       (dotimes (i nrows)
-		 (dotimes (j ncols)
-		   (when (not (= i j))  ; leave the diagonal unchanged
-		     (matrix-setf new-m i j (matrix-aref m j i)))))
-	       new-m)))))
+  (cond ((and (not (matrix-vector-p m)) (not (matrix-square-p m)))
+	 (error "The number of COLUMNS and ROWS of the given MATRIX must be equal or the matrix must be a 1D matrix"))
+	((and (not (matrix-vector-p m)) (or (matrix-same-elt-p #'equalp m)
+					    (matrix-identity-mult-p m)))
+	 (defmatrix m))
+	((and (not (matrix-vector-p m)) (matrix-identity-add-p m))
+	 (defmatrix m))
+	(t
+	 (let* ((new-m (copy-matrix m))
+		(arr (matrix-contents new-m))
+		(nrows (matrix-nrows new-m))
+		(ncols (matrix-ncols new-m)))
+	   (cond ((matrix-column-p m)
+		  (setf (matrix-dimensions new-m) (list 1 nrows)
+			(matrix-nrows new-m) 1
+			(matrix-ncols new-m) nrows
+			(matrix-contents new-m) (let ((arr-1 (make-array
+							      (matrix-dimensions new-m))))
+						  (dotimes (j nrows)
+						    (setf (aref arr-1 0 j)
+							  (aref arr j 0)))
+						  arr-1)))
+		 ((matrix-row-p m)
+		  (setf (matrix-dimensions new-m) (list ncols 1)
+			(matrix-nrows new-m) ncols
+			(matrix-ncols new-m) 1
+			(matrix-contents new-m) (let ((arr-1 (make-array
+							      (matrix-dimensions new-m))))
+						  (dotimes (i ncols)
+						    (setf (aref arr-1 i 0)
+							  (aref arr 0 i)))
+						  arr-1)))
+		 (t (dotimes (i nrows)
+		      (dotimes (j ncols)
+			(when (not (= i j))  ; leave the diagonal unchanged
+			  (setf (aref arr i j) (aref arr j i)))))))
+	   new-m))))
+
+(defun matrix-column-p (m)
+  "Return T is the givem matrix is a column array, that is, its second dimension is 1,
+otherwise return NIL."
+  (= (matrix-ncols m) 1))
+
+(defun matrix-row-p (m)
+  "Return T is the givem matrix is a row array, that is, its first dimension is 1,
+otherwise return NIL."
+  (= (matrix-nrows m) 1))
+
+(defun matrix-vector-p (m)
+  "Return T is the givem matrix is a vector, that is, one of its dimensions is 1,
+otherwise return NIL."
+  (or (= (matrix-nrows m) 1) (= (matrix-ncols m) 1)))
 
 (defun matrix-symetric-p (m)
   "Return T if the given MATRIX is symmetric, otherwise return NIL.
@@ -520,55 +629,101 @@ It makes sense only for square matrices."
 	 (error "The number of COLUMNS and ROWS of the given MATRIX must be equal."))
 	(t (matrix-compare #'equalp m (matrix-T m)))))
 
-;;; Printing functions
-(defun type->string (x)
-  "Coerce the given data (of any `type') into string.
-E.g.: (type->string 125) ==> \"125\"
-      (type->string '(1 2 5)) ==> \"(1 2 5)\""
-  (typecase x
-    (string x)
-    (symbol (symbol-name x))
-    (t (write-to-string x))))
-
-(defun cols-width (m)
-  "Returns a list that contains the width of each column of the given matrix `m'.
-The width is the length of the longest element of the column.
-To get the length of an element, it is first converted into string."
-  (let ((w-lst nil))
-    (dotimes (i (matrix-ncols m))
-      (setf w-lst
-	    (append w-lst
-		    (list
-		     (vector-max (matrix-column (matrix-map #'length
-							   (matrix-map #'type->string m))
-						i))))))
-    w-lst))
-
-(defun print-row (destination row widths &key (padding 1) (sep #\Space))
-  "Print the row `row' where each column's width is specified in the list `widths'.
-The argument `padding' specify the number of blank space between an element 
-and the separator `sep'. Separator can be any character."
-  (let ((row-lst (coerce row 'list)))
-    (labels ((print-row-rec (row widths)
-	       (cond ((null row) (format destination "~%"))
-		     (t (format destination (concatenate 'string
-					       "~" (write-to-string (car widths))
-					       "@S")
-				(car row))
-			(when (not (null (cdr row)))
-			  (format destination (concatenate 'string
-						 "~," (write-to-string padding)
-						 "T~C~," (write-to-string padding) "T")
-				  sep))
-			(print-row-rec (cdr row) (cdr widths))))))
-      (print-row-rec row-lst widths))))
-
-(defun print-matrix (destination m &key (padding 1) (sep #\Space))
-  "Print matrix `m' in tabular format."
-  (let ((widths (cols-width m)))
+(defun matrix-augment (m1 m2 &key (axis 0))
+  "Augment matrix `m1' with matrix `m2' along the given axis defaulted to 0."
+  (when (or (and (= axis 1) (not (= (matrix-ncols m1) (matrix-ncols m2))))
+	    (and (= axis 0) (not (= (matrix-nrows m1) (matrix-nrows m2)))))
+      (error "The two given matrices must have conforming dimensions."))
+  (let* ((nrows (matrix-nrows m1)) (ncols (matrix-ncols m1))
+	 (nrows-2 (matrix-nrows m2)) (ncols-2 (matrix-ncols m2)))
+    (cond ((= axis 0)
+	   (let* ((new-m (matrix-zeros (list nrows (+ ncols ncols-2)))))
+	     (dotimes (j ncols)
+	       (matrix-setf new-m (matrix-aref m1 :col j) :col j))
+	     (dotimes (j ncols-2)
+	       (matrix-setf new-m (matrix-aref m2 :col j) :col (+ ncols j)))
+	     new-m))
+	  ((= axis 1)
+	   (let* ((new-m (matrix-zeros (list (+ nrows nrows-2) ncols))))
+	     (dotimes (j ncols)
+	       (matrix-setf new-m (matrix-aref m1 :col j) :col j))
+	     (dotimes (i nrows-2)
+	       (matrix-setf new-m (matrix-aref m2 :row i) :row (+ nrows i)))
+	     new-m))
+	  (t (error "Matrix does not have this axis.")))))
+ 
+(defun matrix-max (m)
+  "Return the maximum value of each element of the given matrix."
+  (let* ((arr (matrix-contents m))
+	 (the-max (aref arr 0 0)))
     (dotimes (i (matrix-nrows m))
-      (print-row destination (matrix-row m i) widths :padding padding :sep sep))))
+      (dotimes (j (matrix-ncols m))
+	(when (> (aref arr i j) the-max)
+	  (setf the-max (aref arr i j)))))
+    the-max))
 
+(defun matrix-swap (m idx-1 idx-2 &key (axis 0))
+  "Swap vectors of the given indices along the given axis.
+If `inplace' is set to T, the given is DESTRUCTIVELY modified and
+returned, otherwise a new matrix is created."
+  (cond ((= axis 0)
+	 (let ((temp (matrix-aref m :row idx-1)))
+	   (matrix-setf m (matrix-aref m :row idx-2) :row idx-1)
+	   (matrix-setf m temp :row idx-2)))
+	((= axis 1)
+	 (let ((temp (matrix-aref m :col idx-1)))
+	   (matrix-setf m (matrix-aref m :col idx-2) :col idx-1)
+	   (matrix-setf m temp :col idx-2)))
+	(t (error "Matrix does not have this axis."))))
 
+(defun gauss-elimination (A b)
+  "Perform a Gauss elimination on the given matrix with the second argument being the right-hand side of the system of linear equations of the form `Ax+b'"
+  (let ((nrows (matrix-nrows A))
+	(ncols (matrix-ncols A))
+	(tol 1e-6)
+	(A (matrix-augment A b :axis 0)))
+    (labels ((select-pivot (A col)
+	       (print "IN")
+	       (print col)
+	       (print nrows)
+	       (do* ((i col (1+ i))
+		     (flag nil (= i nrows)))
+		    ((or (= i nrows) (> (abs (matrix-aref A :row i :col col)) tol))
+		     (values (if flag nil (matrix-aref A :row i :col col))
+			     i flag))
+		 (print "INSIDE")
+		 (print i))))
+      (block outer
+	(dotimes (j ncols)
+	  (print "OUT")
+	  (print j)
+	  (block inner
+	    (when (= (1+ j) nrows)
+	      (print "TRUE")
+	      (return-from outer A))
+	    (multiple-value-bind (pivot p-idx flag)
+		(select-pivot A j)
+	      (format t "~&pivot ~A: ~A~%" j pivot)
+	      (when flag (return-from inner))
+	      (setf A (matrix-swap A j p-idx))
+	      (do* ((i (1+ j) (1+ i)))
+		   ((= i nrows))
+		(print "OUTSIDE")
+		(let ((row-modif (matrix-aref A :row i))
+		      (lead (matrix-aref A :row i :col j)))
+		  (tagbody
+		     (when (zerop lead)
+		       (go continue))
+		     (setf A (matrix-setf
+			      A
+			      (matrix+ (matrix-aref A :row p-idx)
+				       (matrix-neg
+					(matrix-scalar-mult (/ pivot lead) row-modif)))
+			      :row i))
+		     (print A)
+		   continue))))))))))
 
+(setf A (defmatrix (make-array '(3 3)
+			       :initial-contents '((1 2 3) (-3 -2 -1) (4 4 4)))))
 
+;(setf b (defmatrix (make-array '(3 1) :initial-contents '((1) (2) (3)))))
